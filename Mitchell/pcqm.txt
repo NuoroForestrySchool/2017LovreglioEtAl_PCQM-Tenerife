@@ -1,0 +1,634 @@
+## PCQM Point-Centered Quarter Method Importance Value and Density Measures
+## Kevin Mitchell - January 2015
+## Based on Quantitative Analysis by the Point-Centered Quarter Method (arXiv 1010.3303)
+
+
+## Importance Value Calculation
+
+###########################################################
+## Warning: This script assumes that there are no vacant quarters 
+## and that each tree has a single trunk 
+###########################################################
+## Data format:
+##	Sampling Point	Quarter No.	Species	Distance (m)	dbh (cm)	# headers are optional
+##	1	1	Acacia	1.1	6						# each row contains: 
+##	1	2	Eucalyptus	1.6	48					# a sample point, a quarter, a species,	
+##	1	3	Casuarina	2.3	15					# a distance from the sample point to 
+##	1	4	Callitris	3	11					# the nearest organism in the quarter,
+##	2	1	Eucalyptus	2.8	65					# and a diameter at breast height (or
+##	2	2	Casuarina	3.7	16					# equivalent)
+##	2	3	Acacia	0.9	10
+##	2	4	Casuarina	2.2	9
+###########################################################
+
+cat("Downloaded: importance.val( )", "\n")
+
+importance.val <- function (z = dataframe)
+
+{
+	DNAME <- paste(deparse(substitute(z)))
+
+	z[z==""] <- NA							# replace empty cells with NA
+
+    if ( any(is.na(z)) )
+		stop("Empty cells are not allowed in the data frame ", DNAME)
+
+    if ( dim(z)[2] != 5 )
+		stop(DNAME, " must have 5 columns in this order: Point, Quarter, Species, Distance, DBH")
+
+	## rename the columns
+	colnames(z) <- c('Point', 'Quarter', 'Species', 'Distance', 'DBH')
+
+	## there should be no vacant quarters, but check again:
+    if ( any(is.na(z[['Distance']])) )
+		stop(DNAME, "Empty cells are not allowed. Recheck data.")
+	
+
+	n = nlevels(factor(z[['Point']]))		# number of sample points along transect
+	quarters = length(factor(z[['Point']]))	# number of observations
+
+    if ( quarters != 4*n | max(table(z$Point)) != min(table(z$Point)) )
+		stop("Some sample point does not have exactly four quarters in data frame ", DNAME)
+		
+	if ( length(table(z$Quarter)) != 4 | max(table(z$Quarter)) != min(table(z$Quarter)) ) 
+		warning("All sample points in data frame ", DNAME, " do not use the same four quarter names.")
+	
+	species = factor(z[['Species']])			# list species observed
+
+	## do the analysis
+	BA = pi * z[['DBH']]^2 /4					# basal area for each tree = pi * d^2 / 4
+															
+	r = mean(z[['Distance']])					# mean distance
+	absDensity = 1 / r^2						# absolute density per m^2
+	absDensityPerHA = 10000 * absDensity		# absolute density per ha
+
+	sumBA = tapply(BA,list(species),sum)		# total basal area by species
+
+	meanBA = tapply(BA,list(species),mean)		# mean basal area by species
+
+
+	prop = table(z[['Species']]) / quarters		# proportion of each species in all observations
+	relDensity = round(100 * prop, 2)			# relative density by species (as %)
+
+
+	treesPerHA = prop * absDensityPerHA			# number of trees per species per ha
+	absCover = meanBA * treesPerHA/10000		# cover (in m^2) by species per ha
+	totalCover = sum(absCover)					# total cover (in m^2) by all species per ha
+
+	relCover = round(100 * absCover/totalCover, 2)	# relative cover as a percent
+
+	## create matrix of points by species: 1 = species is present at point, 0 = otherwise
+	ptXsp = ceiling(table(z[['Point']], z[['Species']]) / 4) 
+
+
+	## number of points (not quarters) at which each species is observed
+	absObservations = colSums(ptXsp, na.rm = FALSE, dims = 1) 
+
+	relFrequency = round(100 * absObservations / sum(absObservations), 2)	# relative frequency by species
+
+	importance = relDensity + relCover + relFrequency		# abs importance by species
+	relImportance = 100 * importance/sum(importance)		# rel importance by species
+
+	absDensity <- absDensityPerHA * table(z$Species) / quarters
+
+	## bind the results into a data frame
+	results <- as.data.frame(rbind(relDensity, relCover, relFrequency, importance, relImportance, absDensity))
+
+	## transpose the data frame so that each row represents a species
+	results <- as.data.frame(t(results))
+
+	## make the column names
+	colnames(results) <- c(" Rel Density", " R Cover", " R Freq", " Importance", " R Import", " Abs Density")
+	
+	## print results in decreasing order of importance
+	
+	cat("Number of sample points: n =", n, "\n")    
+	cat("Overall Absolute Density per Hectare (Cottam & Curtis):", format(round(absDensityPerHA, 2), nsmall = 2), "\n", "\n")    
+
+	return(format(round(results[order(-importance), ], 2), nsmall = 2))	
+}
+
+
+## Density Estimates Using the Point-Centered Quarter Method
+## Formulae from Cottam & Curtis (1956) and Morisita (1957), Pollard (1971) and Seber (1982),
+## and Warde and Petranka (1981)
+
+###########################################################
+## Data format:
+## Header1	Header2	Header3	Header4			# headers are optional
+## 		1.1		2.0		3.4		4.4			# distances of nearest organism
+## 		5.2		6.1		7.9		3.3			# from each sample point along the transect
+## 		9.1		1.8		1.1		1.2			# one observation from each quarter.
+## 		6.3		6.8		NA		5.7			# Use NA for missing data
+###########################################################
+
+cat("Downloaded: density.est( )", "\n")
+
+
+density.est <- function (z = dataframe, method = c("pollard", "cottam", "warde"), conf.level = 0.95)
+	{ 
+
+    if (!((length(conf.level) == 1L) && is.finite(conf.level) && 
+        (conf.level > 0) && (conf.level < 1))) 
+        stop("'conf.level' must be a single number between 0 and 1")
+	
+    method <- match.arg(method)
+    	
+	## number of sample points = # of rows of z
+	n <- dim(z)[1] 
+
+	## number of sectors per point = # of cols of z, typically 4 (quarter method)
+	## method "pollard" allows for any natural number of sectors
+	q <- dim(z)[2]
+	
+	if (n < 2) 
+		    stop("Not enough points.")
+	
+    DNAME <- paste(deparse(substitute(z)))
+
+	alpha <- 1 - conf.level			# for use only with method "pollard"
+	
+	## Initialize the confidence interval
+	CINT <- c(0, Inf)				
+	
+	## Convert table to list
+	distance = unlist(z, use.names = FALSE)
+	
+	## vacant is the number of vacant quarters
+	vacant <- length(distance[is.na(distance) == TRUE]) 
+	n1 <- length(distance[is.na(distance) == FALSE])
+
+	if ( vacant == 0 )
+		{
+		PARAMETER <- n
+    	names(PARAMETER) <- "No. of sample pts: n"
+    	}
+    else
+    	{
+		PARAMETER <- c(n, vacant)
+    	names(PARAMETER) <- c("No. of sample pts: n", "No. of vacant quarters:")
+    	}
+
+	## Cottam & Curtis: (1956) estimate (biased) of population density 
+
+    if (method == "cottam") 
+    	{
+    	
+     	if ( q != 4 )
+		    stop("Cottam and Curtis's method requires four quarters for each sample point.")
+
+	   	if ( vacant != 0 )
+ 			{
+ 			warning("Some points do not have four observations. Using Warde and Petranka's Method.")
+ 			method <- "warde"
+ 			}
+		else
+			{ 
+			r <- mean(distance, na.rm = TRUE)
+		    density <- 1/(r^2)*10000
+	
+			METHOD <- "Cottam, Curtis, & Hale Point-Centered Quarter Method 
+						   density estimate"
+	    	}
+		}
+
+	## An unbiased estimate of the population density (Pollard: 1971, Seber: 1982)
+
+	if (method == "pollard") 
+ 			{	
+ 			
+	   		if ( vacant != 0 )
+ 				{
+ 				warning("Some points do not have ", q, " observations. Using Warde and Petranka's Method.")
+ 				method <- "warde"
+ 				}
+ 			else
+ 				{
+				R.sq <- distance^2
+				density <- 10000*(q*(q*n-1))/(pi*sum(R.sq))
+
+				METHOD <- paste("Pollard's estimate of density using", q, "sectors per point")
+
+				## Confidence interval	
+				lowerIC <- 10000 * (q * qchisq(alpha/2, df = 2*n*q))/(2*pi*sum(R.sq))	#Exact
+				upperIC <- 10000 * (q * qchisq(1-alpha/2, df = 2*n*q))/(2*pi*sum(R.sq))	#Exact
+				CINT <- c(lowerIC, upperIC)
+			    attr(CINT, "conf.level") <- conf.level
+			    }
+			}
+
+	## An unbiased estimate of the population density with truncated sampling
+	## following Warde and Petranka (1981)
+
+	if (method == "warde")
+			{ 
+
+     		if ( q != 4 )
+		    	stop("Warde and Petranka's method requires four quarters for each sample point.")
+
+			## The adjustment factor used in Table CF in Warde and Petranka (1981)
+			## Remember: The number of quarters is 4*n
+			CFWP <- (pgamma(-log(vacant/(4*n)),3/2) / (1-(vacant/(4*n))))^2 
+
+			rTrunc <- distance[is.na(distance) == F]
+		
+			## Mean distance: Sum the distances, divided by the number of non-vacant quarters
+			meanTrunc <- mean(rTrunc)	
+
+			## corrected density per hectare
+			density <- 10000 * CFWP/meanTrunc^2	
+
+			METHOD <- "Warde & Petranka (1981) estimate of density using 4 sample quarters per point"
+    		}
+    		
+	ESTIMATE <- density
+	names(ESTIMATE) <- "density per hectare"
+
+ 	if (method == "pollard") 
+		{	
+		PCQVAL <- list(parameter = PARAMETER, conf.int = CINT, estimate = ESTIMATE,
+				method = METHOD, data.name = DNAME)
+		}
+	else
+		{
+		PCQVAL <- list(parameter = PARAMETER, estimate = ESTIMATE, method = METHOD, data.name = DNAME)
+		}
+		
+	attr(PCQVAL, "class") <- "htest"
+	return(PCQVAL)    		 		
+	}
+	
+## Density estimates using Angle-Order methods
+	
+###########################################################
+## Data format:
+## Header1	Header2	Header3	...	Headerq		# headers are optional
+## 		1.1		2.0		3.4	...	4.4			# distances of k-th nearest organism
+## 		5.2		6.1		7.9	...	3.3			# from each sample point along the transect
+## 		9.1		1.8		1.1	...	1.2			# one observation from each of the q sectors
+## 		6.3		6.8		6.2	...	5.7			
+###########################################################
+
+cat("Downloaded: angle.order.est( )", "\n")
+
+
+angle.order.est <- function (z = dataframe, k = 3, method = c("auto", "morisita1", "morisita2", "morisita"), conf.level = 0.95)
+	{ 
+
+	DNAME <- paste(deparse(substitute(z)))
+
+    if (!((length(conf.level) == 1L) && is.finite(conf.level) && 
+        (conf.level > 0) && (conf.level < 1))) 
+        stop("conf.level must be a single number between 0 and 1")
+	
+    if ( (k <= 0) | (k %% 1 != 0) )
+        stop("'k' must be a positive integer.")
+
+	z[z==""] <- NA							# replace empty cells with NA
+
+	method <- match.arg(method)
+
+    if ( any(is.na(z)) )
+		stop("Empty cells are not allowed in data frame ", DNAME)
+
+	## number of sample points = # of rows of z
+	n <- dim(z)[1] 
+
+	## number of sectors per point = # of cols of z, typically 4 (quarter method)
+	q <- dim(z)[2]
+	
+	if (n < 2) 
+		    stop("Not enough points.")
+	
+
+	if ( ( k%%1 != 0 ) | ( k < 1 ) )	# k%%1 means k (mod 1) 	
+		stop("k must be a positive integer.")
+
+	alpha <- 1 - conf.level			# for use only with method "pollard"
+	
+ 	if ( q == 1 )
+ 		{
+ 			sector.type <- paste("1 sector at each sample point")
+ 		}
+	else
+		{
+			sector.type <- paste(q, "sectors at each sample point")
+		}
+
+ 	if ( k == 1 )
+ 		{
+ 			order.type <- paste("closest")
+ 		}
+	else
+		{
+			if ( k == 2 )
+				{  	
+					order.type <- paste("second closest")
+				}
+			else 
+				{
+					if ( k == 3 )  	
+						order.type <- paste("third closest")
+					else
+						order.type <- paste(k,"-th closest", sep = "")
+				}
+		}
+
+	## Initialize the confidence interval
+	CINT <- c(0, Inf)				
+	
+	## Convert table to list
+	distance = unlist(z, use.names = FALSE)
+	
+ 	## An estimate of population density
+ 	## Morisita (1957 using the k-th closest
+ 	## tree to the sample point in each of q sectors, k > 1.
+
+	if (method == "auto") 
+		{
+			if ( k < 3 )	# we already know k is a positive integer
+				{
+					if ( q == 1)
+						{
+			 				warning("Method auto requires k > 2. Used method morisita instead.")
+ 							method <- "morisita"
+		 				}
+		 			else		# q is at least 2 so 
+		 				{
+							warning("Method auto requires k > 2. Used method morisita2 instead.")
+ 							method <- "morisita2"
+		 				}
+		 		}
+			else
+				{ 
+					m1 <- 10000 * (k - 1)/(pi * n)*sum(1/z^2)
+
+					R.sq <- z^2			# square all entries, still in table form 
+					m2 <- 10000 * (k * q - 1)/ (pi * n) * sum(q/rowSums(R.sq))
+					
+					if ( m1 < m2 )
+						{
+						density <- (m1 + m2)/2
+						selection <- paste("m1 < m2 (", format(round(m1, 2), nsmall = 2)," < ",
+						format(round(m2, 2), nsmall = 2),"). Use m0 = (m1 + m2)/2.", sep = "")
+						}
+					else
+						{
+						density <- m1
+						selection <- paste("m1 > m2 (", format(round(m1, 2), nsmall = 2)," > ",
+						format(round(m2, 2), nsmall = 2),"). Use m1.", sep = "")
+					}
+
+					METHOD <- paste("Morisita Practical Procedure for density 
+					estimate with ", sector.type, " using the ", order.type, " individuals. ",
+					selection, sep = "")
+				}
+		}
+
+
+	if (method == "morisita1") 
+		{
+			if ( k < 3 )	# we already know k is a positive integer
+				{
+					if ( q == 1)
+						{
+			 				warning("Method morisita1 requires k > 2. Used method morisita instead.")
+ 							method <- "morisita"
+		 				}
+		 			else		# q is at least 2 so 
+		 				{
+							warning("Method morisita1 requires k > 2. Used method morisita2 instead.")
+ 							method <- "morisita2"
+		 				}
+		 		}
+			else
+				{ 
+					density <- 10000 * (k - 1)/(pi * n)*sum(1/z^2)
+	
+					METHOD <- paste("Morisita 1 density estimate with ", sector.type, "using the ", order.type, "individuals.")
+				}
+		}
+					
+ 	## Another estimate of population density Morisita (1957)
+ 	## using only the k-th closest tree to the sample point in each of q sectors, kq > 2.
+
+   if (method == "morisita2") 
+    	{
+			if ( k * q == 1 )
+				{
+					warning("Method morisita2 requires kq > 1. Used method morisita instead.")
+ 					method <- "morisita"
+				}
+			else
+				{
+					R.sq <- z^2			# square all entries, still in table form 
+			
+					density <- 10000 * (k * q - 1)/ (pi * n) * sum(q/rowSums(R.sq))
+	
+					METHOD <- paste("Morisita 2 density estimate with ", sector.type, " using the ", order.type, "individual in each sector.")
+		    	}
+		}
+	
+ 	## Angle-order estimate of population density for randomly distributed populations
+ 	## Morisita (1957) using the k-th closest
+ 	## tree to the sample point in each of q sectors.
+
+	if (method == "morisita") 
+		{
+		R.sq <- distance^2
+		density <- 10000 * q * (q * k * n - 1)/(pi * sum(R.sq))
+	
+		METHOD <- paste("Morisita angle-order density estimate for randomly distributed populations
+		with ", sector.type, " using the ", order.type, "individuals.")
+
+		## confidence interval	
+		lowerIC <- 10000 * (q * qchisq(alpha/2, df = 2*q*k*n))/(2*pi*sum(R.sq))		# Exact
+		upperIC <- 10000 * (q * qchisq(1-alpha/2, df = 2*q*k*n))/(2*pi*sum(R.sq))	# Exact
+		CINT <- c(lowerIC, upperIC)
+		attr(CINT, "conf.level") <- conf.level
+		}
+
+	PARAMETER <- n
+    names(PARAMETER) <- "Number of sample points: n"
+
+	ESTIMATE <- density
+	names(ESTIMATE) <- "density per hectare"
+
+ 	if (method == "morisita")
+		{	
+		PCQVAL <- list(parameter = PARAMETER, conf.int = CINT, estimate = ESTIMATE,
+				method = METHOD, data.name = DNAME)
+		}
+	else
+		{
+		PCQVAL <- list(parameter = PARAMETER, estimate = ESTIMATE, method = METHOD, data.name = DNAME)
+		}
+		
+	attr(PCQVAL, "class") <- "htest"
+	return(PCQVAL)
+
+	}	
+	
+## Non-parametric Density Estimates (Patil, et. al., 1982)
+## That is, at each of the n sample points along the transect, the distance to the 
+## single closest individual is recorded (there are no quarters). 
+
+
+cat("Downloaded: np.density.est( )", "\n")
+
+np.density.est <- function (z = dataframe, conf.level = 0.95)
+	{ 
+	DNAME <- paste(deparse(substitute(z)))
+
+    if (!((length(conf.level) == 1L) && is.finite(conf.level) && 
+        (conf.level > 0) && (conf.level < 1))) 
+        stop("conf.level must be a single number between 0 and 1")
+	
+	z[z==""] <- NA							# replace empty cells with NA
+
+	## vacant is the number of vacant quarters; initialize to 0
+	vacant <- length(z[is.na(z) == TRUE]) 
+	n1 <- length(z[is.na(z) == FALSE])
+
+	## number of sample points = # of rows of z
+	n <- dim(z)[1] 
+	if (n < 2) 
+		    stop("Not enough points.")
+	
+
+	## number of cols of z 
+	if ( dim(z)[2] > 1 )
+		stop("There should only be one column of data consisting of the closest individual at each sample point.")
+				
+	## initialize the confidence interval
+	CINT <- c(0, Inf)				
+	alpha <- 1 - conf.level
+		
+	METHOD <- paste("Patil, et. al. (1982) non-parametric density estimate using the closest individual at each sample point.")
+	
+	if ( vacant == 0 )
+		{
+		k <- floor(n^(2/3))
+		R <- sort(z[[1]])[k]						# k-th smallest distance
+	
+	 	density <- (n^(2/3) - 1)/(n * pi * R^2)
+	 	sd <- density/n^(1/3) 						# variance <- density^2/n^(2/3)
+ 	
+ 		## confidence interval	
+ 		error <- qnorm(1 - alpha/2) * sd
+		lowerIC <- 10000 * (density - error)		# approximate
+		upperIC <- 10000 * (density + error)		# approximate
+
+		PARAMETER <- n
+    	names(PARAMETER) <- "No. of sample pts: n"
+    	}
+
+    else
+    	{
+		k <- floor(n1^(2/3))						# n1 = # of non-vacant cells
+		R <- sort(z[[1]], na.last = TRUE)[k]		# k-th smallest distance
+	
+	 	density <- n1/n * (n1^(2/3) - 1)/(n1 * pi * R^2)
+	 	variance <- density^2/n1^(2/3) + density^2 * (1/n1 - 1/n) * (1 + 1/n1^(2/3))
+	 	sd <- sqrt(variance)
+ 	
+ 		## confidence interval	
+ 		error <- qnorm(1 - alpha/2) * sd
+		lowerIC <- 10000 * (density - error)		# approximate
+		upperIC <- 10000 * (density + error)		# approximate
+
+		PARAMETER <- c(n, vacant)
+    	names(PARAMETER) <- c("No. of sample pts: n", "No. of truncated points:")
+    	}
+
+	ESTIMATE <- 10000 * density
+	names(ESTIMATE) <- "density per hectare"
+	CINT <- c(lowerIC, upperIC)
+	attr(CINT, "conf.level") <- conf.level
+
+	PCQVAL <- list(parameter = PARAMETER, conf.int = CINT, estimate = ESTIMATE,
+				method = METHOD, data.name = DNAME)
+	attr(PCQVAL, "class") <- "htest"
+	return(PCQVAL)
+	}	
+
+## Patil 1979. np.density.est is a revised version of this. Remove this
+
+## cat("Downloaded: patil1979.est( ). Remove in final version.", "\n")
+	
+patil1979.est <- function (z = dataframe, conf.level = 0.95)
+	{ 
+	DNAME <- paste(deparse(substitute(z)))
+
+    if (!((length(conf.level) == 1L) && is.finite(conf.level) && 
+        (conf.level > 0) && (conf.level < 1))) 
+        stop("conf.level must be a single number between 0 and 1")
+	
+	z[z==""] <- NA							# replace empty cells with NA
+
+	## vacant is the number of vacant quarters; initialize to 0
+	vacant <- length(z[is.na(z) == TRUE]) 
+	n1 <- length(z[is.na(z) == FALSE])
+
+	## number of sample points = # of rows of z
+	n <- dim(z)[1] 
+	if (n < 2) 
+		    stop("Not enough points.")
+	
+	## number of cols of z 
+	if ( dim(z)[2] > 1 )
+		stop("There should only be one column of data consisting of the closest individual at each sample point.")
+				
+	## initialize the confidence interval
+	CINT <- c(0, Inf)				
+	alpha <- 1 - conf.level
+		
+	METHOD <- paste("Patil, et. al. (1979) non-parametric density estimate using closest 
+		individual at each point. See/use 1982 revision.")
+	
+	if ( vacant == 0 )
+		{
+		k <- floor(sqrt(n))
+		R <- sort(z[[1]])[k]						# k-th smallest distance
+	
+	 	density <- 1/(sqrt(n) * pi * R^2)
+	 	sd <- density/n^(1/4) 						# variance <- density^2/n^(2/3)
+ 	
+ 		## confidence interval	
+ 		error <- qnorm(1 - alpha/2) * sd
+		lowerIC <- 10000 * (density - error)		# approximate
+		upperIC <- 10000 * (density + error)		# approximate
+
+		PARAMETER <- n
+    	names(PARAMETER) <- "No. of sample pts: n"
+    	}
+
+    else
+    	{
+		k <- floor(sqrt(n1))						# n1 = # of non-vacant cells
+		R <- sort(z[[1]], na.last = TRUE)[k]		# k-th smallest distance
+	
+	 	density <- sqrt(n1)/(n * pi * R^2) 			# = n1/n * 1/(sqrt(n1) * pi * R^2)
+	 	variance <- density^2/sqrt(n1) + density^2 * (1/n1 - 1/n) * (1 + 1/sqrt(n1))
+	 	sd <- sqrt(variance)
+ 	
+ 		## confidence interval	
+ 		error <- qnorm(1 - alpha/2) * sd
+		lowerIC <- 10000 * (density - error)		# approximate
+		upperIC <- 10000 * (density + error)		# approximate
+
+		PARAMETER <- c(n, vacant)
+    	names(PARAMETER) <- c("No. of sample pts: n", "No. of truncated points:")
+    	}
+
+	CINT <- c(lowerIC, upperIC)
+	attr(CINT, "conf.level") <- conf.level
+
+	ESTIMATE <- 10000 * c(density, 0.404686 * density)
+	names(ESTIMATE) <- c("density per hectare", "density per acre")
+
+	PCQVAL <- list(parameter = PARAMETER, conf.int = CINT, 
+			estimate = ESTIMATE, method = METHOD, data.name = DNAME)
+	attr(PCQVAL, "class") <- "htest"
+	return(PCQVAL)
+	}	
