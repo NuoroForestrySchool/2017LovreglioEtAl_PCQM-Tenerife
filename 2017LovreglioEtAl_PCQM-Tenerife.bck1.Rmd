@@ -1,0 +1,107 @@
+---
+title: "2017 Lovreglio et al. - PCQM in Tenerife"
+output:
+  html_notebook: default
+  html_document: default
+---
+
+```{r set-up, message=FALSE, warning=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(
+  tidy = TRUE
+#  , results = 'hold'
+)
+library(tidyverse, warn.conflicts = FALSE, verbose = FALSE, quietly = TRUE )
+dbname <- "2017LovreglioEtAl_PCQM-Tenerife.sqlite"
+```
+
+
+# Database structure
+![ER digram from survey DB: "`r dbname`"](DBvis_ERdiagram.png)
+
+### Some specifications.
+Tables in the first column simply decode the correspondent Id's used in the 'Transects' table which actually collects almost all the information.  
+Table 'Trees_dbh' is required to acquire 'brest heigth diameter (dbh)' of trees that have more than one 'brest heigth' crossection connected to a common 'base' (or root system: e.g. in coppices or forked stems). In the present case, having only one 'dbh' for each 'base'(*), 'dbh' could have been recorded instead of 'Id_treeBase'
+
+(* Verification: see below)
+
+```{r read-data, tidy=FALSE, results="markup"}
+options(width = 120)
+DB <- src_sqlite(path = dbname)
+db_list_tables(DB$con)
+
+tabs <- tribble(
+  ~ord,          ~table,   ~tibble  
+,    0, "Interventions",   "N/A"
+,    1,       "VertStr",   "N/A"
+,    2,       "Species",   "N/A"
+,    3,     "Transects",   "N/A"
+,    4,     "Trees_dbh",   "N/A"
+)
+# use 'table' name as default 'tibble' name
+tabs$tibble[tabs$tibble=="N/A"] <- tabs$table
+## Acquisizione tabelle da DB
+for (i in 1:nrow(tabs)) {
+  assign(tabs$tibble[i], eval.parent(as_tibble(tbl(DB, tabs$table[i]))))
+  print(" ")
+  print(" |--------------------- ")
+  print(paste("\\ /  Table:", tabs$tibble[i]))
+  print(get(tabs$tibble[i]), n=3)
+  # Sys.sleep(2)
+}
+
+```
+
+# Processing
+```{r processig, results="markup"}
+source("Mitchell/pcqm.txt")
+
+compute_density <- function(x) {
+  x %>%
+    ungroup() %>%
+    select(Id_transect, Id_point, Id_quadrant, Dist) %>%
+    spread(key=Id_quadrant, value=Dist) %>%
+    select(`1`, `2`, `3`, `4`) %>%
+    density.est() -> a
+  dens <- a[['estimate']][1]
+  npts <- a[['parameter']][1]
+  nvpts <- a[['parameter']][2]
+  conf.int <- NULL
+  conf.int <- if(is.null(a[['conf.int']])) rep(NA, 3) else c(attr(a$conf.int, "conf.level"), a[['conf.int']])
+  ## add also Method!!
+  data.frame(dens, npts, nvpts, conf.int.conf.level = conf.int[1], conf.int.l = conf.int[2], conf.int.u = conf.int[3], row.names = NULL)
+}
+
+print("Table 1: 'Density by condition and layer")
+z <- NULL
+Transects %>% 
+  group_by(Id_transect, Id_layer) %>%
+  do(compute_density(.)) -> z
+print(z)
+z %>% 
+  select(Id_transect, Id_layer, dens) %>%
+  spread(Id_layer, dens) %>%
+  left_join(Interventions, .)
+
+print("Table 2: 'Density by layer")
+z <- NULL
+Transects %>% 
+  group_by(Id_layer) %>%
+  do(compute_density(.)) -> z
+print(z)
+cbind('...' =paste(rep(" ", 20), collapse=''),spread(select(z, Id_layer, dens), Id_layer, dens))
+## ------
+
+### Verify (*)  [one single 'dbh' for each 'treeBase']
+
+# Trees_dbh <- rbind(Trees_dbh, Trees_dbh[1,]) ## Just for testing!
+if (nrow(unique(Trees_dbh[,c("Id_transect", "Id_treeBase")]))!=nrow(Trees_dbh)) {
+  stop("There is more than 1 dbh for each tree-base!")
+} else print(" [Ok: there is one single 'dbh' for each 'treeBase'")
+
+Transects <- Transects %>% left_join(Trees_dbh)
+
+
+```
+
+

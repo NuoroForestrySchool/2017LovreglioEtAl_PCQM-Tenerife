@@ -1,67 +1,3 @@
----
-title: "2017 Lovreglio et al. - PCQM in Tenerife"
-output:
-  html_document: default
-  html_notebook: default
----
-
-```{r set-up}
-rm(list=ls())
-knitr::opts_chunk$set(results = 'hold')
-# knitr::opts_chunk$set(tidy = TRUE, results = 'hold')
-dbname <- "2017LovreglioEtAl_PCQM-Tenerife.sqlite"
-```
-
-
-# Database structure
-![ER digram from survey DB: "`r dbname`"](DBvis_ERdiagram.png)
-
-### Some specifications.
-Tables in the first column simply decode the correspondent Id's used in the 'Transects' table which actually collects almost all the information.  
-Table 'Trees_dbh' is required to acquire 'brest heigth diameter (dbh)' of trees that have more than one 'brest heigth' crossection connected to a common 'base' (or root system: e.g. in coppices or forked stems). In the present case, having only one 'dbh' for each 'base'(*), 'dbh' could have been recorded instead of 'Id_treeBase'
-
-(* Verification: see below)
-
-```{r read-data}
-# ```{r read-data, tidy=FALSE, results="markup"}
-library(tidyverse, warn.conflicts = FALSE, verbose = FALSE, quietly = TRUE )
-options(width = 120)
-DB <- src_sqlite(path = dbname)
-db_list_tables(DB$con)
-
-tabs <- tribble(
-  ~ord,          ~table,   ~tibble  
-,    0, "Interventions",   "N/A"
-,    1,       "VertStr",   "N/A"
-,    2,       "Species",   "N/A"
-,    3,     "Transects",   "N/A"
-,    4,     "Trees_dbh",   "N/A"
-)
-# use 'table' name as default 'tibble' name
-tabs$tibble[tabs$tibble=="N/A"] <- tabs$table
-## Acquisizione tabelle da DB
-for (i in 1:nrow(tabs)) {
-  assign(tabs$tibble[i], eval.parent(as_tibble(tbl(DB, tabs$table[i]))))
-  print(" ")
-  print(" |--------------------- ")
-  print(paste("\\ /  Table:", tabs$tibble[i]))
-  print(get(tabs$tibble[i]), n=3)
-  # Sys.sleep(2)
-}
-### Verify (*)  [one single 'dbh' for each 'treeBase']
-
-# Trees_dbh <- rbind(Trees_dbh, Trees_dbh[1,]) ## Just for testing!
-if (nrow(unique(Trees_dbh[,c("Id_transect", "Id_treeBase")]))!=nrow(Trees_dbh)) {
-  stop("There is more than 1 dbh for each tree-base!")
-} else print(" [Ok: there is one single 'dbh' for each 'treeBase'")
-
-
-```
-
-# Processing
-```{r processig}
-#```{r processig, results="markup"}
-rm(list = ls())
 library(Rmisc)
 # 'tidyverse' carica 'dplyr', se viene prima di 'Rmisc', genera questo avviso:
 #### --------------------------------------------------------------------
@@ -75,8 +11,7 @@ library(magrittr)
 # source("http://math.hws.edu/pcqm/pcqm.txt") 
 # original source, documented in https://arxiv.org/abs/1010.3303
 #                 pdf in https://arxiv.org/pdf/1010.3303.pdf
-source("Mitchell/pcqm.txt")
-source("F_PCQstats.R")
+
 
 dbname <- "2017LovreglioEtAl_PCQM-Tenerife.sqlite"
 DB <- src_sqlite(path = dbname)
@@ -104,7 +39,6 @@ ggplot(Transects, aes(VertLayer, Height)) +
   scale_y_log10() + 
   labs(x="Vertical layer", y="Height [m]", title="Distribution of vegetation heigth") +
   coord_flip()
-
 ggplot(Transects, aes(CrownDiam1, CrownDiam2)) + 
   geom_point(aes(shape = AntiErosionIntervention, 
                  col = VertLayer)) + 
@@ -130,6 +64,7 @@ ggplot(Transects, aes(Height, CrownArea)) +
   scale_x_log10() + scale_y_log10() +
   labs(title="Crown dimensions: area ~ tree.height")
 
+source("F_PCQstats.R")
 PCQtabByLyTr <- Transects %>%
   mutate(Cov = CrownDiam1 * CrownDiam2 * pi/4) %>%
   group_by(Id_layer, Id_transect) %>%
@@ -140,26 +75,16 @@ PCQtabByLy <- Transects %>%
   group_by(Id_layer) %>%
   do(PCQstats(., Cover=Cov))
 
-print("Internal Control table: mean density computed averaging 'by transect' estimations is not identical to 'pooled transects' estimation")
 PCQtabByLyTr %>%
   group_by(Id_layer, Species) %>%
-  dplyr::summarise(dens_byTrAvg = mean(densPartBySp)) %>%
+  summarise(l_dens = mean(densPartBySp)) %>%
   full_join(PCQtabByLy[,c(1,2,5)]) %>%
-  dplyr::rename(dens_allTr = densPartBySp) %>%
-  mutate(r= dens_byTrAvg / dens_allTr)
+  mutate(r= l_dens / densPartBySp)
 
-print("Table 1: 'Density by condition and layer")
-print("Table 2: 'Density by layer")
-# da finire
 PCQtabByLyTr %>%
   group_by(Id_transect, Id_layer, Species) %>%
-  dplyr::summarise(densBySp = mean(densPartBySp)) %>%
+  summarise(densBySp = mean(densPartBySp)) %>%
   group_by(Id_transect, Id_layer) %>%
-  dplyr::summarise(dens = sum(densBySp)) %>%
+  summarise(dens = sum(densBySp)) %>%
   select(Id_transect, Id_layer, dens) %>%
   spread(Id_layer, dens)
-
-
-```
-
-
