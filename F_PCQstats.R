@@ -1,6 +1,7 @@
 PCQstats <- function(Transect, Point=Point, Quarter=Quarter, Dist=Dist, 
                      Species=Species, Cover=Cover) {
-  ## {programming reference, just above: http://dplyr.tidyverse.org/articles/programming.html#different-input-variable }
+### interface towards Mitchell's 'density.est', complete PCQ calculations
+    ## {programming reference, just above: http://dplyr.tidyverse.org/articles/programming.html#different-input-variable }
   ## 0 - Density estimate (accounting for vacant quarters)
   Cover <- enquo(Cover)
   cols <- levels(as.factor(Transect$Quarter))
@@ -9,7 +10,7 @@ PCQstats <- function(Transect, Point=Point, Quarter=Quarter, Dist=Dist,
     select(Point, Quarter, Dist) %>%
     spread(key=Quarter, value=Dist) %>%
     select(cols) %>%
-    density.est()
+    density.est()                ### hart of the function!! Mitchell source
   dens <- a[['estimate']][1]
   method <- a$method
   npts <- a[['parameter']][1]

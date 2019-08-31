@@ -1,8 +1,8 @@
 ---
 title: "2017 Lovreglio et al. - PCQM in Tenerife"
 output:
-  html_document: default
   html_notebook: default
+  html_document: default
 ---
 
 ```{r set-up}
@@ -100,7 +100,7 @@ Transects$AntiErosionIntervention <-
 
 ggplot(Transects, aes(VertLayer, Height)) + 
   geom_boxplot(aes(colour = AntiErosionIntervention)) + 
-  guides(col = guide_legend(reverse=TRUE)) +
+  guides(col = guide_legend(reverse=TRUE, title = "Anti-erosion intervention")) +
   scale_y_log10() + 
   labs(x="Vertical layer", y="Height [m]", title="Distribution of vegetation heigth") +
   coord_flip()
@@ -124,19 +124,21 @@ ggplot(Transects, aes(CrownDiam1, CrownDiam2)) +
 
 Transects <- Transects %>% mutate(CrownArea = CrownDiam1*CrownDiam2*pi/4)
 ggplot(Transects, aes(Height, CrownArea)) +
-  geom_point(aes(col = VertLayer)) + 
+  geom_point(aes(col = VertLayer, title="Vertical layer")) + 
   guides(col = guide_legend(reverse=TRUE)) +
   facet_wrap(~AntiErosionIntervention) +
   scale_x_log10() + scale_y_log10() +
-  labs(title="Crown dimensions: area ~ tree.height")
+  labs(title="'Crown area' vs 'tree height'")
 
 # da fare: height ~ dbh
 
+# PCQ computation, by Layer and Transect,  using <crownCover> as 'cover'
 PCQtabByLyTr <- Transects %>%
   mutate(Cov = CrownDiam1 * CrownDiam2 * pi/4) %>%
   group_by(Id_layer, Id_transect) %>%
   do(PCQstats(., Cover=Cov))
 
+# PCQ computation, by Layer (pooling Transects),  using <crownCover> as 'cover'
 PCQtabByLy <- Transects %>%
   mutate(Cov = CrownDiam1 * CrownDiam2 * pi/4) %>%
   group_by(Id_layer) %>%
@@ -150,28 +152,32 @@ PCQtabByLyTr %>%
   dplyr::rename(dens_allTr = densPartBySp) %>%
   mutate(r= dens_byTrAvg / dens_allTr)
 
-print("Table 1: 'Density by intervention type and vertical layer")
 PCQtabByLyTr1 <- Transects %>%
   mutate(Cov = CrownDiam1 * CrownDiam2 * pi/4) %>%
   group_by(VertLayer, AntiErosionIntervention) %>%
   do(PCQstats(., Cover=Cov))
 
+print("Table 1: 'Density by intervention type and vertical layer")
 PCQtabByLyTr1 %>%
   group_by(AntiErosionIntervention, VertLayer, Species) %>%
   dplyr::summarise(densBySp = mean(densPartBySp)) %>%
   group_by(AntiErosionIntervention, VertLayer) %>%
   dplyr::summarise(dens = sum(densBySp)) %>%
-  select(AntiErosionIntervention, VertLayer, dens) %>%
-  spread(VertLayer, dens)
+  mutate(density = round(dens,1)) %>%
+  select(AntiErosionIntervention, VertLayer, density) %>%
+  spread(VertLayer, density)
 
+print("Table 2: 'Density by vertical layer")
 PCQtabByLyTr1 %>%
   group_by(VertLayer, Species) %>%
   dplyr::summarise(densBySp = mean(densPartBySp)) %>%
   group_by(VertLayer) %>%
   dplyr::summarise(dens = sum(densBySp)) %>%
-  select(VertLayer, dens) %>%
-  spread(VertLayer, dens)
+  mutate(dens_r = round(dens,1)) %>%
+  select(VertLayer, dens_r) %>%
+  spread(VertLayer, dens_r)
 
+#OLD
 PCQtabByLyTr1 %>% mutate(Importance =relDensBySp+rDominance+relFrq) %>%
   ggplot(aes(VertLayer, Importance)) + 
   geom_jitter(aes(col = AntiErosionIntervention, 
@@ -179,22 +185,44 @@ PCQtabByLyTr1 %>% mutate(Importance =relDensBySp+rDominance+relFrq) %>%
               height = .1, width = .2) + 
   guides(col = guide_legend(reverse=TRUE)) +
   guides(shape = guide_legend(reverse=TRUE)) +
-  scale_y_log10() + 
   labs(x="Vertical layer", y="PCQ importance",
        title="Distribution of vegetation 'importance' values") +
   coord_flip()
 
+## knitr configuration: http://yihui.name/knitr/options#chunk_options
+# opts_chunk$set(comment = "", error= TRUE, warning = FALSE, message = FALSE,
+#               tidy = FALSE, cache = F, echo = T,
+#               fig.width = 6, fig.height = 6)
+
+## R configuration
+options(width = 116, scipen = 5)
+
+lbls <- rep("", 4*3)
+lbls[c(2,5,8,11)] <- PCQtabByLyTr1 %$% levels(AntiErosionIntervention)
+
+PCQtabByLyTr1 %>% mutate(pctCrownCover = Dominance * 100 / 10000 ) %>%
+  ggplot(aes(pctCrownCover, interaction(VertLayer, AntiErosionIntervention))) + 
+  geom_point(aes(col = VertLayer, 
+                 shape = Species), size = 3) + 
+  scale_shape_manual(values = c(18, 16, 15, 17)) +
+  scale_x_log10() + 
+  guides(col = guide_legend(reverse=TRUE, title = "Vertical layer")) +
+  guides(shape = guide_legend(reverse=TRUE)) +
+  labs(y="Anti-erosion intervention", x="PCQ crown cover [%]",
+       title="Forest stand structure") +
+  scale_y_discrete(labels = lbls)
+
+
 PCQtabByLyTr1 %>% mutate(Importance =relDensBySp+rDominance+relFrq) %>%
-  ggplot(aes(AntiErosionIntervention, Importance)) + 
+  ggplot(aes(AntiErosionIntervention, Importance, group=VertLayer)) + 
   geom_jitter(aes(col = VertLayer, 
                  shape = Species), size = 3,
-              height = .1, width = .2) + 
+              height = .3, width = .1) + 
   scale_shape_manual(values = c(18, 16, 15, 17)) +
-  guides(col = guide_legend(reverse=TRUE)) +
+  guides(col = guide_legend(reverse=TRUE, title = "Vertical layer")) +
   guides(shape = guide_legend(reverse=TRUE)) +
-  scale_y_log10() + 
-  labs(x="Vertical layer", y="PCQ importance",
-       title="Distribution of vegetation 'importance' values") +
+  labs(x="Anti-erosion intervention", y="PCQ 'importance values'",
+       title="Forest stand structure") +
   coord_flip()
 
 ```
